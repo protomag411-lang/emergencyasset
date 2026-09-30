@@ -1,0 +1,6 @@
+{
+  "name": "Emergency Asset Reallocation Console",
+  "description": "Critical emergency resource allocation, medicine stock availability tracking, copyright & IP licensing verification, and cross-schema compliance command center for health zones.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

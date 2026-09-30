@@ -1,0 +1,20 @@
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Private keys / credentials
+*.pem
+*.key
+*.p12
+*.pfx
+service-account*.json
+credentials*.json
+
+# Dependencies / build output
+node_modules/
+dist/
+build/
+coverage/
+.DS_Store
+*.log
