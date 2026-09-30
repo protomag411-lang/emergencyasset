@@ -18,6 +18,7 @@ import {
 import {
   assetStore,
   complianceService,
+  hospitalBoardStore,
   ConcurrencyConflictError,
   ValidationError,
 } from "./server/store";
@@ -295,6 +296,60 @@ app.post("/api/reallocations/execute", authenticate, rateLimit(20, 60000), (req:
   );
 
   res.json(result);
+});
+
+// -------------------------------------------------------------
+// Hospital Board Emergency Requests & Allocations
+// -------------------------------------------------------------
+
+// Fetch all emergency board requests
+app.get("/api/board-requests", authenticate, (req: Request, res: Response) => {
+  res.json(hospitalBoardStore.getRequests());
+});
+
+// Create new emergency resource request
+app.post("/api/board-requests", authenticate, rateLimit(40, 60000), (req: Request, res: Response) => {
+  const newReq = hospitalBoardStore.createRequest(req.body, req.actor!, req.ip || "unknown");
+  res.status(201).json(newReq);
+});
+
+// Supplying Hospital Board: Approve request
+app.post("/api/board-requests/:id/approve", authenticate, rateLimit(30, 60000), (req: Request, res: Response) => {
+  const { approverName } = req.body || {};
+  const approved = hospitalBoardStore.approveRequest(req.params.id, approverName, req.actor!, req.ip || "unknown");
+  res.json({ request: approved, zones: assetStore.getZones() });
+});
+
+// Supplying Hospital Board: Reject request
+app.post("/api/board-requests/:id/reject", authenticate, rateLimit(30, 60000), (req: Request, res: Response) => {
+  const { reason } = req.body || {};
+  const rejected = hospitalBoardStore.rejectRequest(req.params.id, reason, req.actor!, req.ip || "unknown");
+  res.json({ request: rejected, zones: assetStore.getZones() });
+});
+
+// Update transfer/dispatch progress status
+app.post("/api/board-requests/:id/status", authenticate, rateLimit(30, 60000), (req: Request, res: Response) => {
+  const { status } = req.body || {};
+  const updated = hospitalBoardStore.updateStatus(req.params.id, status, req.actor!, req.ip || "unknown");
+  res.json({ request: updated, zones: assetStore.getZones() });
+});
+
+// -------------------------------------------------------------
+// In-App Notification Center
+// -------------------------------------------------------------
+
+// Fetch in-app notifications for active demo role / hospital
+app.get("/api/notifications", authenticate, (req: Request, res: Response) => {
+  const role = req.query.role as string | undefined;
+  const hospital = req.query.hospital as string | undefined;
+  const notifications = hospitalBoardStore.getNotifications(role, hospital);
+  res.json(notifications);
+});
+
+// Mark notification as read
+app.post("/api/notifications/:id/read", authenticate, (req: Request, res: Response) => {
+  hospitalBoardStore.markNotificationRead(req.params.id);
+  res.json({ success: true, id: req.params.id });
 });
 
 // Multi-layer schema, regulatory, clinical, and logistics audit

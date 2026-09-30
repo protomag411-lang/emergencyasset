@@ -8,8 +8,10 @@ import {
   OperatorSession,
   OperatorProfile,
   SecurityAuditRecord,
+  HospitalBoardRequest,
 } from './types';
-import { INITIAL_ZONES, INITIAL_COPYRIGHT_ISSUES } from './data/initialData';
+import { INITIAL_ZONES, INITIAL_COPYRIGHT_ISSUES, INITIAL_BOARD_REQUESTS } from './data/initialData';
+import UnifiedEmergencyResourceCoordinator from './components/UnifiedEmergencyResourceCoordinator';
 import FacilitiesOverview from './components/FacilitiesOverview';
 import MedicineStockView from './components/MedicineStockView';
 import VerificationEngine from './components/VerificationEngine';
@@ -33,6 +35,9 @@ import {
   Key,
   Shield,
   AlertTriangle,
+  Search,
+  Radio,
+  Building2,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 
@@ -44,7 +49,7 @@ const INITIAL_LOGS: SystemLog[] = [
     metric: 'VENTILATOR_UTILIZATION_RATE',
     value: '94%',
     status: 'CRITICAL_OVERLOAD',
-    message: 'Emergency threshold breached. Concurrency locks and server-side RBAC validation active.',
+    message: 'Emergency threshold breached. Concurrency locks, multi-resource tracking, and server-side RBAC validation active.',
     type: 'critical',
   },
 ];
@@ -52,6 +57,7 @@ const INITIAL_LOGS: SystemLog[] = [
 export default function App() {
   const [zones, setZones] = useState<HealthZone[]>(INITIAL_ZONES);
   const [logs, setLogs] = useState<SystemLog[]>(INITIAL_LOGS);
+  const [boardRequests, setBoardRequests] = useState<HospitalBoardRequest[]>(INITIAL_BOARD_REQUESTS);
   const [session, setSession] = useState<OperatorSession | null>(null);
   const [availableProfiles, setAvailableProfiles] = useState<OperatorProfile[]>([]);
   const [isClearanceModalOpen, setIsClearanceModalOpen] = useState(false);
@@ -59,7 +65,9 @@ export default function App() {
   const [complianceEnabled, setComplianceEnabled] = useState(false);
   const [copyrightIssues, setCopyrightIssues] = useState<CopyrightIssue[]>(INITIAL_COPYRIGHT_ISSUES);
   const [verificationReport, setVerificationReport] = useState<VerificationResponse | null>(null);
-  const [activeTelemetryTab, setActiveTelemetryTab] = useState<'facilities' | 'pharmacy' | 'audit' | 'compliance'>('facilities');
+  const [activeTelemetryTab, setActiveTelemetryTab] = useState<
+    'unified_resources' | 'facilities' | 'pharmacy' | 'audit' | 'compliance'
+  >('unified_resources');
   const [auditPurgeNotice, setAuditPurgeNotice] = useState<string | null>(null);
   const [securityAlert, setSecurityAlert] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -111,6 +119,20 @@ export default function App() {
     }
   }, [session?.token, authHeaders]);
 
+  // Fetch hospital board emergency requests
+  const fetchBoardRequests = useCallback(async () => {
+    if (!session?.token) return;
+    try {
+      const res = await fetch('/api/board-requests', { headers: authHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setBoardRequests(data);
+      }
+    } catch (err) {
+      console.error('Failed to load board requests', err);
+    }
+  }, [session?.token, authHeaders]);
+
   // Fetch audit records
   const fetchAuditRecords = useCallback(async () => {
     if (!session?.token) return;
@@ -158,35 +180,25 @@ export default function App() {
           setSession(data.session);
           setAvailableProfiles(data.availableProfiles);
 
-          // Once session is established, load zones and audit logs
-          const zonesRes = await fetch('/api/zones', {
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${data.session.token}`,
-            },
-          });
-          if (zonesRes.ok) {
-            const zonesData = await zonesRes.json();
-            setZones(zonesData);
-          }
+          // Once session is established, load zones, board requests, and audit logs
+          const [zonesRes, boardRes, auditRes, compRes] = await Promise.all([
+            fetch('/api/zones', {
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.session.token}` },
+            }),
+            fetch('/api/board-requests', {
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.session.token}` },
+            }),
+            fetch('/api/audit-logs', {
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.session.token}` },
+            }),
+            fetch('/api/compliance/status', {
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.session.token}` },
+            }),
+          ]);
 
-          const auditRes = await fetch('/api/audit-logs', {
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${data.session.token}`,
-            },
-          });
-          if (auditRes.ok) {
-            const auditData = await auditRes.json();
-            setAuditRecords(auditData);
-          }
-
-          const compRes = await fetch('/api/compliance/status', {
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${data.session.token}`,
-            },
-          });
+          if (zonesRes.ok) setZones(await zonesRes.json());
+          if (boardRes.ok) setBoardRequests(await boardRes.json());
+          if (auditRes.ok) setAuditRecords(await auditRes.json());
           if (compRes.ok) {
             const compData = await compRes.json();
             setComplianceEnabled(compData.enabled);
@@ -221,11 +233,109 @@ export default function App() {
         );
         fetchAuditRecords();
         fetchCompliance();
+        fetchBoardRequests();
       }
     } catch (err) {
       console.error('Failed to switch operator duty', err);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // Hospital Board Emergency Requests Actions
+  const handleCreateBoardRequest = async (reqData: Omit<HospitalBoardRequest, 'id' | 'timestamp' | 'status'>) => {
+    try {
+      const res = await fetch('/api/board-requests', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(reqData),
+      });
+      if (res.ok) {
+        const created: HospitalBoardRequest = await res.json();
+        setBoardRequests((prev) => [created, ...prev]);
+        addLog(
+          `EMERGENCY BOARD REQUEST: Filed for ${created.requestedQuantity}x ${created.resourceName} to ${created.supplyingHospital}. Priority: ${created.priority}.`,
+          'critical',
+          created.requestingHospital
+        );
+        fetchAuditRecords();
+      }
+    } catch (err) {
+      console.error('Failed to submit board request', err);
+    }
+  };
+
+  const handleApproveBoardRequest = async (id: string, approverName?: string) => {
+    try {
+      const res = await fetch(`/api/board-requests/${id}/approve`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ approverName }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const approved: HospitalBoardRequest = data.request || data;
+        if (data.zones) setZones(data.zones);
+        setBoardRequests((prev) => prev.map((r) => (r.id === id ? approved : r)));
+        addLog(
+          `HOSPITAL BOARD APPROVED: ${approved.supplyingHospital} authorized emergency transfer of ${approved.requestedQuantity}x ${approved.resourceName} to ${approved.requestingHospital}.`,
+          'success',
+          approved.supplyingHospital
+        );
+        fetchAuditRecords();
+        fetchZones();
+      }
+    } catch (err) {
+      console.error('Failed to approve request', err);
+    }
+  };
+
+  const handleRejectBoardRequest = async (id: string, reason?: string) => {
+    try {
+      const res = await fetch(`/api/board-requests/${id}/reject`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ reason }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const rejected: HospitalBoardRequest = data.request || data;
+        if (data.zones) setZones(data.zones);
+        setBoardRequests((prev) => prev.map((r) => (r.id === id ? rejected : r)));
+        addLog(
+          `HOSPITAL BOARD REJECTED: Request ${id} for ${rejected.resourceName} was denied by ${rejected.supplyingHospital}. Reason: ${reason || 'Capacity threshold preserved'}.`,
+          'warning',
+          rejected.supplyingHospital
+        );
+        fetchAuditRecords();
+      }
+    } catch (err) {
+      console.error('Failed to reject request', err);
+    }
+  };
+
+  const handleUpdateBoardRequestStatus = async (id: string, status: HospitalBoardRequest['status']) => {
+    try {
+      const res = await fetch(`/api/board-requests/${id}/status`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ status }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const updated: HospitalBoardRequest = data.request || data;
+        if (data.zones) setZones(data.zones);
+        setBoardRequests((prev) => prev.map((r) => (r.id === id ? updated : r)));
+        addLog(
+          `TRANSFER STATUS: Request ${id} transitioned to [${status.toUpperCase()}].`,
+          'info',
+          updated.requestingHospital
+        );
+        fetchAuditRecords();
+        fetchZones();
+      }
+    } catch (err) {
+      console.error('Failed to update request status', err);
     }
   };
 
@@ -506,6 +616,7 @@ export default function App() {
   const overloadCount = zones.filter((z) => z.status === 'critical_overload').length;
   const allMeds = zones.flatMap((z) => z.medicineStock);
   const totalCriticalShortages = allMeds.filter((m) => m.status === 'critical_shortage').length;
+  const pendingBoardCount = boardRequests.filter((r) => r.status === 'pending_board_approval').length;
 
   const isOperatorAdmin =
     session?.operator.role === 'COMPLIANCE_ADMIN' || session?.operator.role === 'CLINICAL_DIRECTOR';
@@ -534,11 +645,11 @@ export default function App() {
                 <div className="flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
                   <h1 className="text-base font-extrabold tracking-wider text-slate-100 uppercase">
-                    Emergency Asset Reallocation Console
+                    Emergency Healthcare Asset Coordination Console
                   </h1>
                 </div>
                 <p className="text-[10px] text-slate-500 font-mono uppercase tracking-widest mt-0.5">
-                  Tactical Command Sector • CN-HEALTH-CORE • Production Enforced
+                  Inter-Hospital Resource Hub • Kolkata • Maharashtra • Karnataka • DEMO/PROTOTYPE DATA
                 </p>
               </div>
             </div>
@@ -576,6 +687,25 @@ export default function App() {
               </div>
             </div>
 
+            {/* Hospital Board Notification Badge */}
+            <button
+              onClick={() => setActiveTelemetryTab('unified_resources')}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition cursor-pointer ${
+                pendingBoardCount > 0
+                  ? 'bg-rose-950/50 border-rose-800/80 text-rose-300 animate-pulse'
+                  : 'bg-slate-900/60 border-slate-900 text-slate-400'
+              }`}
+              title="View and act on pending Hospital Board requests"
+            >
+              <Radio className="w-3.5 h-3.5 text-rose-400" />
+              <div>
+                <span className="text-[9px] text-slate-500 block uppercase">Hospital Board</span>
+                <span className="font-bold">
+                  {pendingBoardCount > 0 ? `🚨 ${pendingBoardCount} Pending Action` : '0 Pending'}
+                </span>
+              </div>
+            </button>
+
             {/* Live Ventilator Util */}
             <div className="flex items-center gap-2 bg-slate-900/60 border border-slate-900 px-3 py-1.5 rounded-lg">
               <BarChart2 className="w-4 h-4 text-cyan-400" />
@@ -612,19 +742,10 @@ export default function App() {
                 className={`w-4 h-4 ${overloadCount > 0 ? 'text-rose-500 animate-bounce' : 'text-slate-500'}`}
               />
               <div>
-                <span className="text-slate-500 text-[9px] block uppercase">Overloaded Facilities</span>
+                <span className="text-slate-500 text-[9px] block uppercase">Overloaded</span>
                 <span className={`font-bold ${overloadCount > 0 ? 'text-rose-400' : 'text-slate-400'}`}>
-                  {overloadCount} Facility
+                  {overloadCount} Hub{overloadCount === 1 ? '' : 's'}
                 </span>
-              </div>
-            </div>
-
-            {/* Ingress / Server State */}
-            <div className="flex items-center gap-2 bg-slate-900/60 border border-slate-900 px-3 py-1.5 rounded-lg">
-              <Lock className="w-3.5 h-3.5 text-emerald-400" />
-              <div>
-                <span className="text-slate-500 text-[9px] block uppercase">Server Trust</span>
-                <span className="font-bold text-emerald-400 uppercase">SECURE</span>
               </div>
             </div>
 
@@ -659,12 +780,26 @@ export default function App() {
           <div className="flex flex-wrap items-center justify-between border-b border-slate-900 pb-3 gap-3">
             <div className="flex flex-wrap items-center gap-2">
               
+              {/* PRIMARY TAB: UNIFIED EMERGENCY RESOURCE COORDINATION */}
+              <button
+                id="tab_unified_resources"
+                onClick={() => setActiveTelemetryTab('unified_resources')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-extrabold transition duration-200 cursor-pointer ${
+                  activeTelemetryTab === 'unified_resources'
+                    ? 'bg-rose-600 text-white shadow-lg shadow-rose-950/50 ring-1 ring-rose-400'
+                    : 'bg-slate-900/90 text-rose-400 hover:text-white border border-rose-950'
+                }`}
+              >
+                <Search className="w-3.5 h-3.5" />
+                Find Emergency Resources (10 Types)
+              </button>
+
               <button
                 id="tab_facilities_view"
                 onClick={() => setActiveTelemetryTab('facilities')}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition duration-200 cursor-pointer ${
+                className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold transition duration-200 cursor-pointer ${
                   activeTelemetryTab === 'facilities'
-                    ? 'bg-rose-600 text-white shadow-lg shadow-rose-950/40'
+                    ? 'bg-slate-700 text-white shadow'
                     : 'bg-slate-900/80 text-slate-400 hover:text-slate-200 border border-slate-800'
                 }`}
               >
@@ -675,7 +810,7 @@ export default function App() {
               <button
                 id="tab_pharmacy_view"
                 onClick={() => setActiveTelemetryTab('pharmacy')}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition duration-200 cursor-pointer ${
+                className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold transition duration-200 cursor-pointer ${
                   activeTelemetryTab === 'pharmacy'
                     ? 'bg-cyan-600 text-white shadow-lg shadow-cyan-950/40'
                     : 'bg-slate-900/80 text-slate-400 hover:text-slate-200 border border-slate-800'
@@ -691,7 +826,7 @@ export default function App() {
                   setActiveTelemetryTab('audit');
                   fetchAuditRecords();
                 }}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition duration-200 cursor-pointer ${
+                className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold transition duration-200 cursor-pointer ${
                   activeTelemetryTab === 'audit'
                     ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-950/40'
                     : 'bg-slate-900/80 text-slate-400 hover:text-slate-200 border border-slate-800'
@@ -709,7 +844,7 @@ export default function App() {
                     setActiveTelemetryTab('compliance');
                     fetchCompliance();
                   }}
-                  className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition duration-200 cursor-pointer ${
+                  className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold transition duration-200 cursor-pointer ${
                     activeTelemetryTab === 'compliance'
                       ? 'bg-purple-600 text-white shadow-lg shadow-purple-950/40'
                       : 'bg-slate-900/80 text-purple-400 hover:text-purple-200 border border-purple-900/40'
@@ -725,11 +860,24 @@ export default function App() {
 
             <div className="flex items-center gap-2 text-[11px] font-mono text-slate-500">
               <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              <span>Canonical Sync v{zones[0]?.version || 1}</span>
+              <span>Multi-Region Active</span>
             </div>
           </div>
 
           {/* Conditional Views */}
+          {activeTelemetryTab === 'unified_resources' && (
+            <section id="unified_resources_section">
+              <UnifiedEmergencyResourceCoordinator
+                zones={zones}
+                boardRequests={boardRequests}
+                onCreateBoardRequest={handleCreateBoardRequest}
+                onApproveBoardRequest={handleApproveBoardRequest}
+                onRejectBoardRequest={handleRejectBoardRequest}
+                onUpdateBoardRequestStatus={handleUpdateBoardRequestStatus}
+              />
+            </section>
+          )}
+
           {activeTelemetryTab === 'facilities' && (
             <section id="telemetry_section">
               <FacilitiesOverview
