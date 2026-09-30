@@ -5,11 +5,12 @@ import { ShieldAlert, ShieldCheck, Cpu, RefreshCw, AlertTriangle, Route, Server,
 interface VerificationEngineProps {
   zones: HealthZone[];
   copyrightIssues?: CopyrightIssue[];
+  authToken?: string;
   onVerificationComplete: (response: VerificationResponse) => void;
   verificationReport: VerificationResponse | null;
 }
 
-export default function VerificationEngine({ zones, copyrightIssues = [], onVerificationComplete, verificationReport }: VerificationEngineProps) {
+export default function VerificationEngine({ zones, copyrightIssues = [], authToken, onVerificationComplete, verificationReport }: VerificationEngineProps) {
   const [loading, setLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState('');
 
@@ -31,12 +32,17 @@ export default function VerificationEngine({ zones, copyrightIssues = [], onVeri
     }
 
     try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`;
+      }
+
       const res = await fetch('/api/verify-schemas', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ zones, copyrightIssues }),
+        headers,
+        body: JSON.stringify({}),
       });
       
       const data = await res.json();

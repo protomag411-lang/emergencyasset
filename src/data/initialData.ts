@@ -16,6 +16,7 @@ export const INITIAL_ZONES: HealthZone[] = [
     staff: { respiratoryTherapists: 14, criticalCareNurses: 30 },
     status: 'optimal',
     utilizationRate: 40,
+    version: 1,
     location: { lat: 31.2304, lng: 121.4737 },
     medicineStock: [
       {
@@ -99,6 +100,7 @@ export const INITIAL_ZONES: HealthZone[] = [
     staff: { respiratoryTherapists: 8, criticalCareNurses: 22 },
     status: 'moderate_load',
     utilizationRate: 70,
+    version: 1,
     location: { lat: 31.2910, lng: 121.5030 },
     medicineStock: [
       {
@@ -182,6 +184,7 @@ export const INITIAL_ZONES: HealthZone[] = [
     staff: { respiratoryTherapists: 18, criticalCareNurses: 45 },
     status: 'critical_overload',
     utilizationRate: 94,
+    version: 1,
     location: { lat: 31.2001, lng: 121.4320 },
     medicineStock: [
       {
@@ -265,6 +268,7 @@ export const INITIAL_ZONES: HealthZone[] = [
     staff: { respiratoryTherapists: 12, criticalCareNurses: 20 },
     status: 'surplus',
     utilizationRate: 28,
+    version: 1,
     location: { lat: 31.2500, lng: 121.5500 },
     medicineStock: [
       {

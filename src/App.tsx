@@ -1,37 +1,77 @@
-import React, { useState } from 'react';
-import { HealthZone, SystemLog, VerificationResponse, RecommendedMedicineTransfer, CopyrightIssue } from './types';
-import { INITIAL_ZONES, calculateMedicineStatus, INITIAL_COPYRIGHT_ISSUES } from './data/initialData';
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  HealthZone,
+  SystemLog,
+  VerificationResponse,
+  RecommendedMedicineTransfer,
+  CopyrightIssue,
+  OperatorSession,
+  OperatorProfile,
+  SecurityAuditRecord,
+} from './types';
+import { INITIAL_ZONES, INITIAL_COPYRIGHT_ISSUES } from './data/initialData';
 import FacilitiesOverview from './components/FacilitiesOverview';
 import MedicineStockView from './components/MedicineStockView';
-import CopyrightManager from './components/CopyrightManager';
 import VerificationEngine from './components/VerificationEngine';
 import ReallocationTool from './components/ReallocationTool';
 import SystemLogs from './components/SystemLogs';
-import { ShieldAlert, HeartPulse, RefreshCw, BarChart2, Pill, Activity, Scale } from 'lucide-react';
+import SecurityAuditView from './components/SecurityAuditView';
+import AdminCompliancePanel from './components/AdminCompliancePanel';
+import OperatorClearanceModal from './components/OperatorClearanceModal';
+import {
+  HeartPulse,
+  BarChart2,
+  Pill,
+  Activity,
+  ShieldAlert,
+  ShieldCheck,
+  Scale,
+  RefreshCw,
+  Lock,
+  UserCheck,
+  Server,
+  Key,
+  Shield,
+  AlertTriangle,
+} from 'lucide-react';
 import { motion } from 'motion/react';
 
-// Initial logs seeded with the user's critical log
 const INITIAL_LOGS: SystemLog[] = [
   {
-    id: 'log-1',
-    timestamp: '2026-07-02 21:40:50 IST',
+    id: 'log-boot-1',
+    timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }) + ' IST',
     facilityId: 'CN-HEALTH-ZONE-3',
     metric: 'VENTILATOR_UTILIZATION_RATE',
     value: '94%',
     status: 'CRITICAL_OVERLOAD',
-    message: 'Emergency threshold breached (94% ventilators, Propofol/Rocuronium < 10% stock). Cross-schema verification required for immediate asset reallocation.',
-    type: 'critical'
-  }
+    message: 'Emergency threshold breached. Concurrency locks and server-side RBAC validation active.',
+    type: 'critical',
+  },
 ];
 
 export default function App() {
   const [zones, setZones] = useState<HealthZone[]>(INITIAL_ZONES);
   const [logs, setLogs] = useState<SystemLog[]>(INITIAL_LOGS);
+  const [session, setSession] = useState<OperatorSession | null>(null);
+  const [availableProfiles, setAvailableProfiles] = useState<OperatorProfile[]>([]);
+  const [isClearanceModalOpen, setIsClearanceModalOpen] = useState(false);
+  const [auditRecords, setAuditRecords] = useState<SecurityAuditRecord[]>([]);
+  const [complianceEnabled, setComplianceEnabled] = useState(false);
   const [copyrightIssues, setCopyrightIssues] = useState<CopyrightIssue[]>(INITIAL_COPYRIGHT_ISSUES);
   const [verificationReport, setVerificationReport] = useState<VerificationResponse | null>(null);
-  const [activeTelemetryTab, setActiveTelemetryTab] = useState<'facilities' | 'pharmacy' | 'copyright'>('facilities');
+  const [activeTelemetryTab, setActiveTelemetryTab] = useState<'facilities' | 'pharmacy' | 'audit' | 'compliance'>('facilities');
+  const [auditPurgeNotice, setAuditPurgeNotice] = useState<string | null>(null);
+  const [securityAlert, setSecurityAlert] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const addLog = (message: string, type: SystemLog['type'], facilityId?: string, metric?: string, value?: string, status?: string) => {
+  const addLog = (
+    message: string,
+    type: SystemLog['type'],
+    facilityId?: string,
+    metric?: string,
+    value?: string,
+    status?: string
+  ) => {
     const timeStr = new Date().toLocaleTimeString('en-US', { hour12: false }) + ' IST';
     const newLog: SystemLog = {
       id: `log-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
@@ -41,157 +81,245 @@ export default function App() {
       value,
       status: status || 'NORMAL',
       message,
-      type
+      type,
     };
     setLogs((prev) => [...prev, newLog]);
   };
 
-  // Copyright issues lifecycle handlers
-  const handleCreateCopyrightIssue = (issueData: Omit<CopyrightIssue, 'id' | 'createdAt'>) => {
-    const timeStr = new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString('en-US', { hour12: false }) + ' IST';
-    const newIssue: CopyrightIssue = {
-      ...issueData,
-      id: `CPR-2026-${Math.floor(100 + Math.random() * 900)}`,
-      createdAt: timeStr
+  // Helper for authenticated requests
+  const authHeaders = useCallback(() => {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
     };
-    setCopyrightIssues((prev) => [newIssue, ...prev]);
-    addLog(
-      `COPYRIGHT DISPUTE CREATED: [${newIssue.id}] "${newIssue.title}" filed against ${newIssue.affectedAssetName} by ${newIssue.copyrightHolder}. Risk: ${newIssue.infringementRisk.toUpperCase()} under ${newIssue.legalStatute}.`,
-      newIssue.infringementRisk === 'critical' ? 'critical' : 'warning',
-      newIssue.affectedFacilityId,
-      'COPYRIGHT_DISPUTE',
-      newIssue.infringementRisk.toUpperCase(),
-      newIssue.status.toUpperCase()
-    );
-  };
+    if (session?.token) {
+      headers['Authorization'] = `Bearer ${session.token}`;
+    }
+    return headers;
+  }, [session?.token]);
 
-  const handleUpdateCopyrightIssue = (issueId: string, updates: Partial<CopyrightIssue>) => {
-    setCopyrightIssues((prev) =>
-      prev.map((issue) => {
-        if (issue.id === issueId) {
-          const updated = { ...issue, ...updates };
-          addLog(
-            `COPYRIGHT RECORD UPDATED: [${issueId}] Status transitioned to [${updated.status.toUpperCase()}]. Action: ${updated.resolutionAction || 'Status adjusted.'}`,
-            updated.status === 'resolved' ? 'success' : updated.status === 'dmca_exempted' ? 'info' : 'warning',
-            updated.affectedFacilityId,
-            'LICENSE_STATUS',
-            updated.status.toUpperCase(),
-            'UPDATED'
-          );
-          return updated;
+  // Fetch canonical zones from server
+  const fetchZones = useCallback(async () => {
+    if (!session?.token) return;
+    try {
+      const res = await fetch('/api/zones', { headers: authHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setZones(data);
+      }
+    } catch (err) {
+      console.error('Failed to load canonical zones from server', err);
+    }
+  }, [session?.token, authHeaders]);
+
+  // Fetch audit records
+  const fetchAuditRecords = useCallback(async () => {
+    if (!session?.token) return;
+    try {
+      const res = await fetch('/api/audit-logs', { headers: authHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setAuditRecords(data);
+      }
+    } catch (err) {
+      // Role may not have audit clearance
+    }
+  }, [session?.token, authHeaders]);
+
+  // Fetch compliance status and issues
+  const fetchCompliance = useCallback(async () => {
+    if (!session?.token) return;
+    try {
+      const statusRes = await fetch('/api/compliance/status', { headers: authHeaders() });
+      if (statusRes.ok) {
+        const statusData = await statusRes.json();
+        setComplianceEnabled(statusData.enabled);
+
+        if (statusData.enabled) {
+          const licRes = await fetch('/api/compliance/licenses', { headers: authHeaders() });
+          if (licRes.ok) {
+            const licData = await licRes.json();
+            setCopyrightIssues(licData);
+          }
         }
-        return issue;
-      })
-    );
-  };
+      }
+    } catch (err) {
+      console.error('Compliance service check error', err);
+    }
+  }, [session?.token, authHeaders]);
 
-  const handleDeleteCopyrightIssue = (issueId: string) => {
-    const target = copyrightIssues.find(i => i.id === issueId);
-    setCopyrightIssues((prev) => prev.filter((i) => i.id !== issueId));
-    addLog(
-      `COPYRIGHT RECORD PURGED: Dispute [${issueId}] "${target?.title || ''}" dismissed and purged from hospital compliance registry.`,
-      'info',
-      target?.affectedFacilityId
-    );
-  };
+  // Initial bootstrap on app load
+  useEffect(() => {
+    async function bootstrap() {
+      setIsLoading(true);
+      try {
+        const res = await fetch('/api/auth/bootstrap');
+        if (res.ok) {
+          const data = await res.json();
+          setSession(data.session);
+          setAvailableProfiles(data.availableProfiles);
 
-  const handleInvokeDMCA = (issueId: string) => {
-    const target = copyrightIssues.find(i => i.id === issueId);
-    handleUpdateCopyrightIssue(issueId, {
-      status: 'dmca_exempted',
-      resolutionAction: 'Applied 17 U.S.C. § 1201 Emergency Healthcare Life-Safety Exemption. Statutory restriction waived.'
-    });
-    addLog(
-      `DMCA §1201 EMERGENCY EXEMPTION INVOKED: Reallocation restriction on ${target?.affectedAssetName || 'asset'} legally superseded under federal public health emergency provisions.`,
-      'success',
-      target?.affectedFacilityId
-    );
-  };
-
-  // Helper to dynamically calculate status of a zone based on updated utilization rate
-  const determineStatusAndRate = (total: number, inUse: number): { rate: number; status: 'critical_overload' | 'moderate_load' | 'optimal' | 'surplus' } => {
-    const rate = total > 0 ? Math.round((inUse / total) * 100) : 0;
-    let status: 'critical_overload' | 'moderate_load' | 'optimal' | 'surplus' = 'optimal';
-    if (rate >= 90) status = 'critical_overload';
-    else if (rate >= 65) status = 'moderate_load';
-    else if (rate <= 35) status = 'surplus';
-    return { rate, status };
-  };
-
-  // Callback to simulate discharging/admitting patients locally
-  const handleUpdateZoneVentilators = (zoneId: string, delta: number) => {
-    setZones((prevZones) =>
-      prevZones.map((zone) => {
-        if (zone.id === zoneId) {
-          const newInUse = Math.max(0, Math.min(zone.ventilators.total, zone.ventilators.inUse + delta));
-          const { rate, status } = determineStatusAndRate(zone.ventilators.total, newInUse);
-          const newAvailable = zone.ventilators.total - newInUse;
-          
-          let logType: SystemLog['type'] = 'info';
-          if (status === 'critical_overload') logType = 'critical';
-          else if (status === 'moderate_load') logType = 'warning';
-          
-          addLog(
-            `Simulated triage change in ${zone.id}: Ventilators in use adjusted to ${newInUse}/${zone.ventilators.total} (${rate}%).`,
-            logType,
-            zone.id,
-            'VENTILATOR_UTILIZATION_RATE',
-            `${rate}%`,
-            status.toUpperCase()
-          );
-
-          return {
-            ...zone,
-            ventilators: {
-              ...zone.ventilators,
-              inUse: newInUse,
-              available: newAvailable
+          // Once session is established, load zones and audit logs
+          const zonesRes = await fetch('/api/zones', {
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${data.session.token}`,
             },
-            status,
-            utilizationRate: rate
-          };
+          });
+          if (zonesRes.ok) {
+            const zonesData = await zonesRes.json();
+            setZones(zonesData);
+          }
+
+          const auditRes = await fetch('/api/audit-logs', {
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${data.session.token}`,
+            },
+          });
+          if (auditRes.ok) {
+            const auditData = await auditRes.json();
+            setAuditRecords(auditData);
+          }
+
+          const compRes = await fetch('/api/compliance/status', {
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${data.session.token}`,
+            },
+          });
+          if (compRes.ok) {
+            const compData = await compRes.json();
+            setComplianceEnabled(compData.enabled);
+          }
         }
-        return zone;
-      })
-    );
+      } catch (err) {
+        console.error('Bootstrap failed', err);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    bootstrap();
+  }, []);
+
+  // Switch operator profile (Duty Shift Handover)
+  const handleSwitchOperator = async (operatorId: string) => {
+    setIsLoading(true);
+    try {
+      const res = await fetch('/api/auth/switch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ operatorId }),
+      });
+      if (res.ok) {
+        const newSession = await res.json();
+        setSession(newSession);
+        setIsClearanceModalOpen(false);
+        addLog(
+          `OPERATOR SHIFT HANDOVER: Active duty assumed by ${newSession.operator.displayName} [Clearance: ${newSession.operator.clearanceLevel}].`,
+          'info',
+          newSession.operator.assignedFacility
+        );
+        fetchAuditRecords();
+        fetchCompliance();
+      }
+    } catch (err) {
+      console.error('Failed to switch operator duty', err);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  // Callback to simulate medicine intake or consumption in a specific facility
-  const handleUpdateMedicineUnits = (zoneId: string, medicineId: string, delta: number) => {
-    setZones((prevZones) =>
-      prevZones.map((zone) => {
-        if (zone.id === zoneId) {
-          const updatedMeds = zone.medicineStock.map((med) => {
-            if (med.id === medicineId) {
-              const newUnits = Math.max(0, Math.min(med.totalCapacity, med.currentUnits + delta));
-              const newStatus = calculateMedicineStatus(newUnits, med.minSafeThreshold, med.totalCapacity);
-              
-              addLog(
-                `Pharmacy stock update in ${zone.id}: ${med.name} adjusted by ${delta > 0 ? '+' : ''}${delta} ${med.unitMeasurement} (Current: ${newUnits}/${med.totalCapacity} [${newStatus.toUpperCase()}]).`,
-                newStatus === 'critical_shortage' ? 'critical' : newStatus === 'low_stock' ? 'warning' : 'info',
-                zone.id,
-                'MEDICINE_BUFFER_STOCK',
-                `${newUnits} ${med.unitMeasurement}`,
-                newStatus.toUpperCase()
-              );
+  // Safe server-authoritative ventilator triage update
+  const handleUpdateZoneVentilators = async (zoneId: string, delta: number) => {
+    const currentZone = zones.find((z) => z.id === zoneId);
+    if (!currentZone) return;
 
-              return {
-                ...med,
-                currentUnits: newUnits,
-                status: newStatus
-              };
-            }
-            return med;
-          });
+    try {
+      const res = await fetch(`/api/zones/${zoneId}/triage`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          delta,
+          expectedVersion: currentZone.version,
+        }),
+      });
 
-          return {
-            ...zone,
-            medicineStock: updatedMeds
-          };
-        }
-        return zone;
-      })
-    );
+      if (res.status === 409) {
+        setSecurityAlert(
+          `CONCURRENCY CONFLICT (409): Zone ${zoneId} was modified by another operator. Automatically refreshing server state...`
+        );
+        fetchZones();
+        fetchAuditRecords();
+        return;
+      }
+
+      if (res.ok) {
+        const updated = await res.json();
+        setZones((prev) => prev.map((z) => (z.id === zoneId ? updated : z)));
+        setSecurityAlert(null);
+        addLog(
+          `Triage updated on ${zoneId}: In-use adjusted by ${delta > 0 ? '+' : ''}${delta} to ${updated.ventilators.inUse}/${updated.ventilators.total} (${updated.utilizationRate}%). Server Version: v${updated.version}.`,
+          updated.status === 'critical_overload' ? 'critical' : updated.status === 'moderate_load' ? 'warning' : 'info',
+          zoneId,
+          'VENTILATOR_LOAD',
+          `${updated.utilizationRate}%`,
+          updated.status.toUpperCase()
+        );
+        fetchAuditRecords();
+      } else {
+        const err = await res.json();
+        setSecurityAlert(`Validation Error: ${err.error}`);
+      }
+    } catch (err) {
+      console.error('Failed to update triage on server', err);
+    }
+  };
+
+  // Safe server-authoritative medicine stock update
+  const handleUpdateMedicineUnits = async (zoneId: string, medicineId: string, delta: number) => {
+    const currentZone = zones.find((z) => z.id === zoneId);
+    if (!currentZone) return;
+
+    try {
+      const res = await fetch(`/api/zones/${zoneId}/medicines/${medicineId}`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          delta,
+          expectedVersion: currentZone.version,
+        }),
+      });
+
+      if (res.status === 409) {
+        setSecurityAlert(
+          `CONCURRENCY CONFLICT (409): Inventory at ${zoneId} was modified concurrently. Refetched latest state.`
+        );
+        fetchZones();
+        fetchAuditRecords();
+        return;
+      }
+
+      if (res.ok) {
+        const updated = await res.json();
+        setZones((prev) => prev.map((z) => (z.id === zoneId ? updated : z)));
+        setSecurityAlert(null);
+        const med = updated.medicineStock.find((m: any) => m.id === medicineId);
+        addLog(
+          `Pharmacy inventory updated in ${zoneId}: ${med.name} adjusted to ${med.currentUnits}/${med.totalCapacity} (${med.status.toUpperCase()}). Server Version: v${updated.version}.`,
+          med.status === 'critical_shortage' ? 'critical' : med.status === 'low_stock' ? 'warning' : 'info',
+          zoneId,
+          'MEDICINE_BUFFER_STOCK',
+          `${med.currentUnits} ${med.unitMeasurement}`,
+          med.status.toUpperCase()
+        );
+        fetchAuditRecords();
+      } else {
+        const err = await res.json();
+        setSecurityAlert(`Inventory Error: ${err.error}`);
+      }
+    } catch (err) {
+      console.error('Failed to update medicine units on server', err);
+    }
   };
 
   // Save Gemini compliance audit results
@@ -203,175 +331,286 @@ export default function App() {
       logType,
       'CN-HEALTH-CORE'
     );
+    fetchAuditRecords();
   };
 
-  // Execute actual asset & medicine transfer across zones
-  const handleExecuteReallocation = (
-    sourceZoneId: string, 
-    ventilatorsMoved: number, 
+  // Transactional Inter-Zone Emergency Reallocation
+  const handleExecuteReallocation = async (
+    sourceZoneId: string,
+    ventilatorsMoved: number,
     staffMoved: number,
     medicinesMoved: RecommendedMedicineTransfer[]
   ) => {
-    setZones((prevZones) => {
-      return prevZones.map((zone) => {
-        // Deduct from surplus source
-        if (zone.id === sourceZoneId) {
-          const newInUse = zone.ventilators.inUse;
-          const newTotal = Math.max(0, zone.ventilators.total - ventilatorsMoved);
-          const newAvailable = Math.max(0, newTotal - newInUse);
-          const { rate, status } = determineStatusAndRate(newTotal, newInUse);
+    const sourceZone = zones.find((z) => z.id === sourceZoneId);
+    const targetZone = zones.find((z) => z.id === 'CN-HEALTH-ZONE-3');
+    if (!sourceZone || !targetZone) return;
 
-          const updatedMeds = zone.medicineStock.map((med) => {
-            const transfer = medicinesMoved.find(m => m.medicineId === med.id);
-            if (transfer && transfer.units > 0) {
-              const newUnits = Math.max(0, med.currentUnits - transfer.units);
-              return {
-                ...med,
-                currentUnits: newUnits,
-                status: calculateMedicineStatus(newUnits, med.minSafeThreshold, med.totalCapacity)
-              };
-            }
-            return med;
-          });
-
-          return {
-            ...zone,
-            ventilators: {
-              ...zone.ventilators,
-              total: newTotal,
-              available: newAvailable
-            },
-            staff: {
-              ...zone.staff,
-              respiratoryTherapists: Math.max(0, zone.staff.respiratoryTherapists - staffMoved)
-            },
-            medicineStock: updatedMeds,
-            utilizationRate: rate,
-            status
-          };
-        }
-        
-        // Add to overloaded destination
-        if (zone.id === 'CN-HEALTH-ZONE-3') {
-          const newInUse = zone.ventilators.inUse;
-          const newTotal = zone.ventilators.total + ventilatorsMoved;
-          const newAvailable = Math.max(0, newTotal - newInUse);
-          const { rate, status } = determineStatusAndRate(newTotal, newInUse);
-
-          const updatedMeds = zone.medicineStock.map((med) => {
-            const transfer = medicinesMoved.find(m => m.medicineId === med.id);
-            if (transfer && transfer.units > 0) {
-              const newUnits = Math.min(med.totalCapacity, med.currentUnits + transfer.units);
-              return {
-                ...med,
-                currentUnits: newUnits,
-                status: calculateMedicineStatus(newUnits, med.minSafeThreshold, med.totalCapacity)
-              };
-            }
-            return med;
-          });
-
-          return {
-            ...zone,
-            ventilators: {
-              ...zone.ventilators,
-              total: newTotal,
-              available: newAvailable
-            },
-            staff: {
-              ...zone.staff,
-              respiratoryTherapists: zone.staff.respiratoryTherapists + staffMoved
-            },
-            medicineStock: updatedMeds,
-            utilizationRate: rate,
-            status
-          };
-        }
-        return zone;
+    try {
+      const res = await fetch('/api/reallocations/execute', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          sourceZoneId,
+          targetZoneId: 'CN-HEALTH-ZONE-3',
+          ventilatorsToMove: ventilatorsMoved,
+          staffToMove: staffMoved,
+          medicinesToMove: medicinesMoved.map((m) => ({ medicineId: m.medicineId, units: m.units })),
+          expectedSourceVersion: sourceZone.version,
+          expectedTargetVersion: targetZone.version,
+        }),
       });
-    });
 
-    // Reset report until next audit to avoid double clicks
-    setVerificationReport(null);
+      if (res.status === 409) {
+        setSecurityAlert('CONCURRENCY LOCK ERROR (409): Facilities were modified concurrently. Re-fetching fresh state.');
+        fetchZones();
+        fetchAuditRecords();
+        return;
+      }
+
+      if (res.ok) {
+        const { sourceZone: updatedSource, targetZone: updatedTarget } = await res.json();
+        setZones((prev) =>
+          prev.map((z) => {
+            if (z.id === sourceZoneId) return updatedSource;
+            if (z.id === 'CN-HEALTH-ZONE-3') return updatedTarget;
+            return z;
+          })
+        );
+        setVerificationReport(null);
+        setSecurityAlert(null);
+        addLog(
+          `TRANSACTION COMMITTED: Transferred ${ventilatorsMoved} ventilators, ${staffMoved} staff, and ICU pharmaceuticals from ${sourceZone.name} to ${targetZone.name}. Versions synchronized to v${updatedSource.version} & v${updatedTarget.version}.`,
+          'success',
+          'CN-HEALTH-ZONE-3'
+        );
+        fetchAuditRecords();
+      } else {
+        const err = await res.json();
+        setSecurityAlert(`Reallocation Failed: ${err.error}`);
+      }
+    } catch (err) {
+      console.error('Failed to commit emergency reallocation', err);
+    }
   };
 
-  const handleClearLogs = () => {
-    setLogs([]);
+  // Test server-side audit trail immutability
+  const handleAttemptPurgeAudit = async () => {
+    try {
+      const res = await fetch('/api/audit-logs', {
+        method: 'DELETE',
+        headers: authHeaders(),
+      });
+      if (res.status === 403) {
+        const err = await res.json();
+        setAuditPurgeNotice(
+          `IMMUTABILITY VERIFIED (403 Forbidden): Server rejected audit log deletion. Code: ${err.code}. Audit trail is append-only.`
+        );
+        setTimeout(() => setAuditPurgeNotice(null), 7000);
+        fetchAuditRecords();
+      }
+    } catch (err) {
+      console.error('Audit delete test failed', err);
+    }
   };
 
-  // Summarized stats for regional header
+  // Toggle compliance feature flag (Secondary Layer)
+  const handleToggleCompliance = async (enabled: boolean) => {
+    try {
+      const res = await fetch('/api/compliance/toggle', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ enabled }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setComplianceEnabled(data.enabled);
+        addLog(
+          `ADMIN GOVERNANCE: Compliance & Licensing module feature flag set to [${data.enabled ? 'ENABLED' : 'DISABLED'}].`,
+          'info',
+          'CN-HEALTH-CORE'
+        );
+        fetchAuditRecords();
+        if (data.enabled) {
+          fetchCompliance();
+        }
+      }
+    } catch (err) {
+      console.error('Failed to toggle compliance flag', err);
+    }
+  };
+
+  // Compliance CRUD Handlers
+  const handleCreateCopyrightIssue = async (issueData: Omit<CopyrightIssue, 'id' | 'createdAt'>) => {
+    try {
+      const res = await fetch('/api/compliance/licenses', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify(issueData),
+      });
+      if (res.ok) {
+        const created = await res.json();
+        setCopyrightIssues((prev) => [created, ...prev]);
+        fetchAuditRecords();
+      }
+    } catch (err) {
+      console.error('Failed to create compliance issue', err);
+    }
+  };
+
+  const handleUpdateCopyrightIssue = async (issueId: string, updates: Partial<CopyrightIssue>) => {
+    try {
+      const res = await fetch(`/api/compliance/licenses/${issueId}`, {
+        method: 'PATCH',
+        headers: authHeaders(),
+        body: JSON.stringify(updates),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setCopyrightIssues((prev) => prev.map((i) => (i.id === issueId ? updated : i)));
+        fetchAuditRecords();
+      }
+    } catch (err) {
+      console.error('Failed to update compliance issue', err);
+    }
+  };
+
+  const handleDeleteCopyrightIssue = (issueId: string) => {
+    setCopyrightIssues((prev) => prev.filter((i) => i.id !== issueId));
+  };
+
+  const handleInvokeDMCA = async (issueId: string) => {
+    try {
+      const res = await fetch(`/api/compliance/licenses/${issueId}/dmca-waiver`, {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setCopyrightIssues((prev) => prev.map((i) => (i.id === issueId ? updated : i)));
+        addLog(
+          `DMCA §1201 EMERGENCY EXEMPTION INVOKED: Reallocation restriction on ${updated.affectedAssetName} legally superseded under federal public health emergency provisions.`,
+          'success',
+          updated.affectedFacilityId
+        );
+        fetchAuditRecords();
+      }
+    } catch (err) {
+      console.error('Failed to invoke DMCA waiver', err);
+    }
+  };
+
+  // Header quick metrics
   const totalVentilators = zones.reduce((sum, z) => sum + z.ventilators.total, 0);
   const totalInUse = zones.reduce((sum, z) => sum + z.ventilators.inUse, 0);
-  const averageUtilization = Math.round((totalInUse / totalVentilators) * 100);
+  const averageUtilization = totalVentilators > 0 ? Math.round((totalInUse / totalVentilators) * 100) : 0;
   const overloadCount = zones.filter((z) => z.status === 'critical_overload').length;
-  
-  const allMeds = zones.flatMap(z => z.medicineStock);
-  const totalCriticalShortages = allMeds.filter(m => m.status === 'critical_shortage').length;
-  const activeCopyrightDisputes = copyrightIssues.filter(i => i.status === 'active_dispute').length;
+  const allMeds = zones.flatMap((z) => z.medicineStock);
+  const totalCriticalShortages = allMeds.filter((m) => m.status === 'critical_shortage').length;
+
+  const isOperatorAdmin =
+    session?.operator.role === 'COMPLIANCE_ADMIN' || session?.operator.role === 'CLINICAL_DIRECTOR';
 
   return (
-    <motion.div 
-      initial={{ opacity: 0 }} 
-      animate={{ opacity: 1 }} 
-      transition={{ duration: 0.6 }} 
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.5 }}
       className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-rose-500/30 selection:text-slate-100"
     >
-      
-      {/* Upper Tactical Status Banner */}
-      <header id="control_header" className="border-b border-slate-900 bg-slate-950/80 backdrop-blur sticky top-0 z-50 px-4 lg:px-8 py-3.5">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+      {/* Upper Tactical Status Header */}
+      <header
+        id="control_header"
+        className="border-b border-slate-900 bg-slate-950/90 backdrop-blur sticky top-0 z-40 px-4 lg:px-8 py-3"
+      >
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
           
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-500 shadow-[0_0_12px_rgba(244,63,94,0.1)]">
-              <HeartPulse className="w-6 h-6 animate-pulse" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
-                <h1 className="text-base font-extrabold tracking-wider text-slate-100 uppercase">Emergency Resource & Medicine Allocation Console</h1>
+          {/* Brand & Sector Identity */}
+          <div className="flex items-center gap-3 w-full md:w-auto justify-between md:justify-start">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-500 shadow-[0_0_12px_rgba(244,63,94,0.15)]">
+                <HeartPulse className="w-6 h-6 animate-pulse" />
               </div>
-              <p className="text-[10px] text-slate-500 font-mono uppercase tracking-widest mt-0.5">Tactical Command Sector • CN-HEALTH-CORE</p>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+                  <h1 className="text-base font-extrabold tracking-wider text-slate-100 uppercase">
+                    Emergency Asset Reallocation Console
+                  </h1>
+                </div>
+                <p className="text-[10px] text-slate-500 font-mono uppercase tracking-widest mt-0.5">
+                  Tactical Command Sector • CN-HEALTH-CORE • Production Enforced
+                </p>
+              </div>
             </div>
+
+            {/* Operator Badge Trigger (Mobile) */}
+            <button
+              onClick={() => setIsClearanceModalOpen(true)}
+              className="md:hidden flex items-center gap-1.5 bg-slate-900 border border-slate-800 px-2.5 py-1.5 rounded-lg text-xs font-mono"
+            >
+              <UserCheck className="w-3.5 h-3.5 text-rose-400" />
+              <span className="text-slate-200">{session?.operator.role || 'OPERATOR'}</span>
+            </button>
           </div>
 
-          {/* Quick Stats Panel */}
-          <div className="flex flex-wrap items-center gap-3 sm:gap-5 text-xs font-mono">
+          {/* Tactical Quick Stats & Operator Authentication Pill */}
+          <div className="flex flex-wrap items-center gap-2 sm:gap-4 text-xs font-mono w-full md:w-auto justify-end">
             
+            {/* Operator Clearance Pill (Desktop) */}
+            <div
+              onClick={() => setIsClearanceModalOpen(true)}
+              className="hidden md:flex items-center gap-2.5 bg-slate-900/80 border border-slate-800 hover:border-slate-700 px-3 py-1.5 rounded-lg cursor-pointer transition"
+              title="Click to view clearances or switch operator duty shift"
+            >
+              <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <div className="text-left">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[9px] text-slate-500 uppercase">Authenticated Operator</span>
+                  <span className="text-[9px] font-bold text-rose-400 bg-rose-950/40 border border-rose-900/40 px-1 rounded">
+                    {session?.operator.role || 'DISPATCHER'}
+                  </span>
+                </div>
+                <span className="font-bold text-slate-200 block text-xs">
+                  {session?.operator.displayName || 'Authenticating...'}
+                </span>
+              </div>
+            </div>
+
+            {/* Live Ventilator Util */}
             <div className="flex items-center gap-2 bg-slate-900/60 border border-slate-900 px-3 py-1.5 rounded-lg">
               <BarChart2 className="w-4 h-4 text-cyan-400" />
               <div>
-                <span className="text-slate-500 text-[9px] block uppercase">Network Ventilator Load</span>
-                <span className="font-bold text-slate-200">{averageUtilization}% ({totalInUse}/{totalVentilators})</span>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 bg-slate-900/60 border border-slate-900 px-3 py-1.5 rounded-lg">
-              <Pill className={`w-4 h-4 ${totalCriticalShortages > 0 ? 'text-rose-400 animate-pulse' : 'text-emerald-400'}`} />
-              <div>
-                <span className="text-slate-500 text-[9px] block uppercase">Pharma Depletions</span>
-                <span className={`font-bold ${totalCriticalShortages > 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
-                  {totalCriticalShortages} Critical Stock
+                <span className="text-slate-500 text-[9px] block uppercase">Network Load</span>
+                <span className="font-bold text-slate-200">
+                  {averageUtilization}% ({totalInUse}/{totalVentilators})
                 </span>
               </div>
             </div>
 
-            <div 
-              id="header_copyright_stat"
-              onClick={() => setActiveTelemetryTab('copyright')}
-              className="flex items-center gap-2 bg-slate-900/60 border border-slate-900 px-3 py-1.5 rounded-lg cursor-pointer hover:border-purple-800/60 transition"
-              title="Click to view and manage copyright issues"
-            >
-              <Scale className={`w-4 h-4 ${activeCopyrightDisputes > 0 ? 'text-purple-400 animate-pulse' : 'text-slate-500'}`} />
+            {/* Pharma Depletions */}
+            <div className="flex items-center gap-2 bg-slate-900/60 border border-slate-900 px-3 py-1.5 rounded-lg">
+              <Pill
+                className={`w-4 h-4 ${
+                  totalCriticalShortages > 0 ? 'text-rose-400 animate-pulse' : 'text-emerald-400'
+                }`}
+              />
               <div>
-                <span className="text-slate-500 text-[9px] block uppercase">Copyright & DRM</span>
-                <span className={`font-bold ${activeCopyrightDisputes > 0 ? 'text-purple-400' : 'text-slate-400'}`}>
-                  {activeCopyrightDisputes} Active Dispute{activeCopyrightDisputes === 1 ? '' : 's'}
+                <span className="text-slate-500 text-[9px] block uppercase">Pharma Alerts</span>
+                <span
+                  className={`font-bold ${
+                    totalCriticalShortages > 0 ? 'text-rose-400' : 'text-emerald-400'
+                  }`}
+                >
+                  {totalCriticalShortages} Critical
                 </span>
               </div>
             </div>
 
+            {/* Overload count */}
             <div className="flex items-center gap-2 bg-slate-900/60 border border-slate-900 px-3 py-1.5 rounded-lg">
-              <ShieldAlert className={`w-4 h-4 ${overloadCount > 0 ? 'text-rose-500 animate-bounce' : 'text-slate-500'}`} />
+              <ShieldAlert
+                className={`w-4 h-4 ${overloadCount > 0 ? 'text-rose-500 animate-bounce' : 'text-slate-500'}`}
+              />
               <div>
                 <span className="text-slate-500 text-[9px] block uppercase">Overloaded Facilities</span>
                 <span className={`font-bold ${overloadCount > 0 ? 'text-rose-400' : 'text-slate-400'}`}>
@@ -380,10 +619,11 @@ export default function App() {
               </div>
             </div>
 
+            {/* Ingress / Server State */}
             <div className="flex items-center gap-2 bg-slate-900/60 border border-slate-900 px-3 py-1.5 rounded-lg">
-              <RefreshCw className="w-3.5 h-3.5 text-emerald-400" />
+              <Lock className="w-3.5 h-3.5 text-emerald-400" />
               <div>
-                <span className="text-slate-500 text-[9px] block uppercase">Ingress Pipeline</span>
+                <span className="text-slate-500 text-[9px] block uppercase">Server Trust</span>
                 <span className="font-bold text-emerald-400 uppercase">SECURE</span>
               </div>
             </div>
@@ -393,15 +633,32 @@ export default function App() {
         </div>
       </header>
 
+      {/* Security Alerts Banner */}
+      {securityAlert && (
+        <div className="bg-amber-950/40 border-b border-amber-800/60 px-4 py-2 text-xs text-amber-300 flex items-center justify-between font-mono">
+          <div className="flex items-center gap-2 max-w-7xl mx-auto w-full">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>{securityAlert}</span>
+            <button
+              onClick={() => setSecurityAlert(null)}
+              className="ml-auto text-amber-400 hover:text-amber-200 text-xs uppercase"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Main Command Dashboard Layout */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 lg:p-8 grid grid-cols-1 lg:grid-cols-3 gap-8">
         
-        {/* Left column (2/3 width on desktop): Telemetry & Verification */}
+        {/* Left column (2/3 width on desktop): Primary Telemetry & Views */}
         <div className="lg:col-span-2 space-y-8">
           
-          {/* Navigation Tab Selector for Telemetry vs Medicine Stock vs Copyright Matrix */}
+          {/* Core Emergency Navigation Tabs */}
           <div className="flex flex-wrap items-center justify-between border-b border-slate-900 pb-3 gap-3">
             <div className="flex flex-wrap items-center gap-2">
+              
               <button
                 id="tab_facilities_view"
                 onClick={() => setActiveTelemetryTab('facilities')}
@@ -414,6 +671,7 @@ export default function App() {
                 <Activity className="w-3.5 h-3.5" />
                 Facility Telemetry Overview
               </button>
+
               <button
                 id="tab_pharmacy_view"
                 onClick={() => setActiveTelemetryTab('pharmacy')}
@@ -426,29 +684,56 @@ export default function App() {
                 <Pill className="w-3.5 h-3.5" />
                 Medicine Stock ({totalCriticalShortages} Alerts)
               </button>
+
               <button
-                id="tab_copyright_view"
-                onClick={() => setActiveTelemetryTab('copyright')}
+                id="tab_audit_view"
+                onClick={() => {
+                  setActiveTelemetryTab('audit');
+                  fetchAuditRecords();
+                }}
                 className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition duration-200 cursor-pointer ${
-                  activeTelemetryTab === 'copyright'
-                    ? 'bg-purple-600 text-white shadow-lg shadow-purple-950/40'
+                  activeTelemetryTab === 'audit'
+                    ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-950/40'
                     : 'bg-slate-900/80 text-slate-400 hover:text-slate-200 border border-slate-800'
                 }`}
               >
-                <Scale className="w-3.5 h-3.5 text-purple-300" />
-                Copyright & IP Licensing ({activeCopyrightDisputes} Issues)
+                <Shield className="w-3.5 h-3.5 text-emerald-300" />
+                Security Audit Registry ({auditRecords.length})
               </button>
+
+              {/* Admin & Optional Compliance (Secondary Layer) */}
+              {isOperatorAdmin && (
+                <button
+                  id="tab_compliance_view"
+                  onClick={() => {
+                    setActiveTelemetryTab('compliance');
+                    fetchCompliance();
+                  }}
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition duration-200 cursor-pointer ${
+                    activeTelemetryTab === 'compliance'
+                      ? 'bg-purple-600 text-white shadow-lg shadow-purple-950/40'
+                      : 'bg-slate-900/80 text-purple-400 hover:text-purple-200 border border-purple-900/40'
+                  }`}
+                  title="Admin → Optional Compliance Tools → Software Licensing"
+                >
+                  <Scale className="w-3.5 h-3.5 text-purple-300" />
+                  Admin Compliance Tools
+                </button>
+              )}
+
             </div>
-            <span className="text-[11px] font-mono text-slate-500 hidden sm:inline-block">
-              Auto-sync: Active Telemetry
-            </span>
+
+            <div className="flex items-center gap-2 text-[11px] font-mono text-slate-500">
+              <span className="w-2 h-2 rounded-full bg-emerald-500" />
+              <span>Canonical Sync v{zones[0]?.version || 1}</span>
+            </div>
           </div>
 
-          {/* Conditional Main Views */}
+          {/* Conditional Views */}
           {activeTelemetryTab === 'facilities' && (
             <section id="telemetry_section">
-              <FacilitiesOverview 
-                zones={zones} 
+              <FacilitiesOverview
+                zones={zones}
                 onUpdateZoneVentilators={handleUpdateZoneVentilators}
                 onUpdateMedicineUnits={handleUpdateMedicineUnits}
               />
@@ -456,57 +741,70 @@ export default function App() {
           )}
 
           {activeTelemetryTab === 'pharmacy' && (
-            <section id="medicine_stock_section">
-              <MedicineStockView 
-                zones={zones} 
-                onUpdateMedicineUnits={handleUpdateMedicineUnits} 
+            <section id="pharmacy_section">
+              <MedicineStockView
+                zones={zones}
+                onUpdateMedicineUnits={handleUpdateMedicineUnits}
               />
             </section>
           )}
 
-          {activeTelemetryTab === 'copyright' && (
-            <section id="copyright_section">
-              <CopyrightManager
-                zones={zones}
-                issues={copyrightIssues}
+          {activeTelemetryTab === 'audit' && (
+            <section id="audit_section">
+              <SecurityAuditView
+                records={auditRecords}
+                onRefresh={fetchAuditRecords}
+                isLoading={isLoading}
+              />
+            </section>
+          )}
+
+          {activeTelemetryTab === 'compliance' && isOperatorAdmin && (
+            <section id="compliance_section">
+              <AdminCompliancePanel
+                complianceEnabled={complianceEnabled}
+                onToggleCompliance={handleToggleCompliance}
+                copyrightIssues={copyrightIssues}
                 onCreateIssue={handleCreateCopyrightIssue}
                 onUpdateIssue={handleUpdateCopyrightIssue}
                 onDeleteIssue={handleDeleteCopyrightIssue}
                 onInvokeDMCA={handleInvokeDMCA}
+                zones={zones}
               />
             </section>
           )}
 
-          {/* Schema & Regulation Checker */}
+          {/* Cross-Schema Regulation & Certification Engine */}
           <section id="verification_section">
-            <VerificationEngine 
-              zones={zones} 
-              copyrightIssues={copyrightIssues}
-              onVerificationComplete={handleVerificationComplete} 
+            <VerificationEngine
+              zones={zones}
+              authToken={session?.token}
+              onVerificationComplete={handleVerificationComplete}
               verificationReport={verificationReport}
             />
           </section>
 
         </div>
 
-        {/* Right column (1/3 width on desktop): Reallocation dispatch & Telemetry Console logs */}
+        {/* Right column (1/3 width on desktop): Reallocation Tool & Immutable Log Stream */}
         <div className="space-y-8">
           
-          {/* Active Reallocation Controls */}
+          {/* Emergency Reallocation Dispatcher */}
           <section id="reallocation_section">
-            <ReallocationTool 
-              zones={zones} 
-              verificationReport={verificationReport} 
+            <ReallocationTool
+              zones={zones}
+              verificationReport={verificationReport}
               onExecuteReallocation={handleExecuteReallocation}
               onAddLog={addLog}
             />
           </section>
 
-          {/* System Console Logs */}
+          {/* Immutable Audit & Telemetry Log Stream */}
           <section id="logs_section">
-            <SystemLogs 
-              logs={logs} 
-              onClearLogs={handleClearLogs} 
+            <SystemLogs
+              logs={logs}
+              onAttemptPurgeAudit={handleAttemptPurgeAudit}
+              auditPurgeNotice={auditPurgeNotice}
             />
           </section>
 
@@ -514,10 +812,15 @@ export default function App() {
 
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-slate-900 py-4 px-4 text-center text-[11px] text-slate-600 font-mono mt-auto">
-        <p>© 2026 Emergency Resource Allocation Center. Certified under FDA/WHO cross-schema mobilization protocol. All times displayed in IST.</p>
-      </footer>
+      {/* Operator Clearance & Role Handover Modal */}
+      <OperatorClearanceModal
+        isOpen={isClearanceModalOpen}
+        onClose={() => setIsClearanceModalOpen(false)}
+        currentOperator={session?.operator || null}
+        availableProfiles={availableProfiles}
+        onSwitchOperator={handleSwitchOperator}
+        isLoading={isLoading}
+      />
 
     </motion.div>
   );

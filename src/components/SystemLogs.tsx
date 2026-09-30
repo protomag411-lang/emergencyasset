@@ -1,13 +1,14 @@
 import React, { useEffect, useRef } from 'react';
-import { Terminal, ShieldAlert, CheckCircle, Info, Flame, Trash2 } from 'lucide-react';
+import { Terminal, ShieldAlert, CheckCircle, Info, Flame, Shield, Lock } from 'lucide-react';
 import { SystemLog } from '../types';
 
 interface SystemLogsProps {
   logs: SystemLog[];
-  onClearLogs: () => void;
+  onAttemptPurgeAudit?: () => void;
+  auditPurgeNotice?: string | null;
 }
 
-export default function SystemLogs({ logs, onClearLogs }: SystemLogsProps) {
+export default function SystemLogs({ logs, onAttemptPurgeAudit, auditPurgeNotice }: SystemLogsProps) {
   const [filter, setFilter] = React.useState<'all' | 'critical' | 'warning' | 'info' | 'success'>('all');
   const consoleEndRef = useRef<HTMLDivElement>(null);
 
@@ -54,8 +55,14 @@ export default function SystemLogs({ logs, onClearLogs }: SystemLogsProps) {
         <div className="flex items-center gap-2">
           <Terminal className="w-5 h-5 text-rose-500 animate-pulse" />
           <div>
-            <h3 className="text-sm font-semibold text-slate-200 tracking-wider uppercase">Active Telemetry Terminal</h3>
-            <p className="text-xs text-slate-500 font-sans mt-0.5">Live emergency dispatch and regulatory logs</p>
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-semibold text-slate-200 tracking-wider uppercase">Active Dispatch & Audit Trail</h3>
+              <span className="flex items-center gap-1 text-[10px] bg-slate-900 text-slate-400 border border-slate-800 px-1.5 py-0.5 rounded">
+                <Lock className="w-3 h-3 text-emerald-400" />
+                Immutable Log Stream
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 font-sans mt-0.5">Tamper-resistant server-synchronized audit events</p>
           </div>
         </div>
         
@@ -64,44 +71,54 @@ export default function SystemLogs({ logs, onClearLogs }: SystemLogsProps) {
           <button 
             id="filter_all"
             onClick={() => setFilter('all')}
-            className={`px-2.5 py-1 rounded transition border ${filter === 'all' ? 'bg-slate-800 border-slate-700 text-slate-100' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
+            className={`px-2.5 py-1 rounded transition border cursor-pointer ${filter === 'all' ? 'bg-slate-800 border-slate-700 text-slate-100' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
           >
             ALL
           </button>
           <button 
             id="filter_critical"
             onClick={() => setFilter('critical')}
-            className={`px-2.5 py-1 rounded transition border ${filter === 'critical' ? 'bg-rose-950/40 border-rose-900/60 text-rose-400 font-bold' : 'border-transparent text-slate-400 hover:text-rose-400'}`}
+            className={`px-2.5 py-1 rounded transition border cursor-pointer ${filter === 'critical' ? 'bg-rose-950/40 border-rose-900/60 text-rose-400 font-bold' : 'border-transparent text-slate-400 hover:text-rose-400'}`}
           >
             CRITICAL
           </button>
           <button 
             id="filter_warning"
             onClick={() => setFilter('warning')}
-            className={`px-2.5 py-1 rounded transition border ${filter === 'warning' ? 'bg-amber-950/40 border-amber-900/60 text-amber-400 font-bold' : 'border-transparent text-slate-400 hover:text-amber-400'}`}
+            className={`px-2.5 py-1 rounded transition border cursor-pointer ${filter === 'warning' ? 'bg-amber-950/40 border-amber-900/60 text-amber-400 font-bold' : 'border-transparent text-slate-400 hover:text-amber-400'}`}
           >
             WARNING
           </button>
           <button 
             id="filter_success"
             onClick={() => setFilter('success')}
-            className={`px-2.5 py-1 rounded transition border ${filter === 'success' ? 'bg-emerald-950/40 border-emerald-900/60 text-emerald-400 font-bold' : 'border-transparent text-slate-400 hover:text-emerald-400'}`}
+            className={`px-2.5 py-1 rounded transition border cursor-pointer ${filter === 'success' ? 'bg-emerald-950/40 border-emerald-900/60 text-emerald-400 font-bold' : 'border-transparent text-slate-400 hover:text-emerald-400'}`}
           >
             SUCCESS
           </button>
           
           <div className="w-[1px] h-4 bg-slate-800 mx-1 hidden sm:block" />
           
-          <button
-            id="clear_logs_btn"
-            onClick={onClearLogs}
-            className="p-1 text-slate-500 hover:text-rose-400 transition ml-auto"
-            title="Clear Logs Console"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
+          {onAttemptPurgeAudit && (
+            <button
+              id="attempt_purge_audit_btn"
+              onClick={onAttemptPurgeAudit}
+              className="px-2 py-1 text-[11px] bg-slate-900 text-slate-400 hover:text-rose-400 border border-slate-800 rounded transition cursor-pointer flex items-center gap-1"
+              title="Audit records are protected by server immutability constraints"
+            >
+              <Shield className="w-3 h-3 text-rose-400" />
+              Verify Immutability
+            </button>
+          )}
         </div>
       </div>
+
+      {auditPurgeNotice && (
+        <div className="mb-3 p-2.5 bg-rose-950/30 border border-rose-800/60 rounded text-xs text-rose-300 flex items-center gap-2">
+          <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0" />
+          <span>{auditPurgeNotice}</span>
+        </div>
+      )}
 
       {/* Logs Stream Panel */}
       <div className="h-64 overflow-y-auto pr-2 space-y-2 text-xs leading-relaxed border border-slate-900 bg-black/40 rounded-lg p-3 select-text">
@@ -138,9 +155,9 @@ export default function SystemLogs({ logs, onClearLogs }: SystemLogsProps) {
       <div className="flex items-center justify-between text-[10px] text-slate-600 mt-3 border-t border-slate-900 pt-2 font-sans">
         <div className="flex items-center gap-1.5">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
-          <span>Secured Server Port: 3000 | Ingress routing online</span>
+          <span>Secured Server Port: 3000 | Concurrency Guard Active</span>
         </div>
-        <span>CN-HEALTH-CORE v3.14</span>
+        <span>CN-HEALTH-CORE v3.14 • Zero Secrets in Client</span>
       </div>
     </div>
   );

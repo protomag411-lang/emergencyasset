@@ -113,7 +113,33 @@ export default function ReallocationTool({ zones, verificationReport, onExecuteR
     return () => clearInterval(interval);
   }, [isSimulating, simStep, ventilatorCount, staffCount, medicineTransfers, sourceZone]);
 
-  if (!verificationReport) return null;
+  if (!verificationReport) {
+    return (
+      <div id="reallocation_control_panel_standby" className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 bg-slate-950 border border-slate-800 rounded-xl text-amber-400">
+            <Truck className="w-5 h-5" />
+          </div>
+          <div>
+            <h2 className="text-lg font-bold text-slate-100 tracking-tight">Inter-Hospital Reallocation Dispatch</h2>
+            <p className="text-xs text-slate-400 font-sans">
+              Awaiting regulatory, pharmaceutical, and cross-schema certification.
+            </p>
+          </div>
+        </div>
+
+        <div className="p-4 bg-slate-950/80 border border-slate-800 rounded-xl space-y-2 font-mono text-xs">
+          <div className="flex items-center gap-2 text-amber-400">
+            <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+            <span>DISPATCH LOCK: Pre-transfer clinical certification required</span>
+          </div>
+          <p className="text-xs text-slate-400 font-sans leading-relaxed">
+            Execute the <strong>Cross-Schema Verification Engine</strong> to audit clinical equipment ratios, schedule IV controlled sedatives, and cold-chain transport parameters. Once certified, the dispatch controls will automatically unlock.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div id="reallocation_control_panel" className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">

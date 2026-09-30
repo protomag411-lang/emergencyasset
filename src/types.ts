@@ -54,6 +54,37 @@ export interface MedicineItem {
   indication: string;
 }
 
+export type UserRole = 'DISPATCHER' | 'CLINICAL_DIRECTOR' | 'COMPLIANCE_ADMIN' | 'SECURITY_AUDITOR';
+
+export interface OperatorProfile {
+  id: string;
+  username: string;
+  displayName: string;
+  role: UserRole;
+  assignedFacility: string;
+  clearanceLevel: 'LEVEL_1_OPERATOR' | 'LEVEL_2_DIRECTOR' | 'LEVEL_3_ADMIN' | 'LEVEL_AUDITOR';
+}
+
+export interface OperatorSession {
+  token: string;
+  operator: OperatorProfile;
+  expiresAt: string;
+}
+
+export interface SecurityAuditRecord {
+  id: string;
+  timestamp: string;
+  actorId: string;
+  actorName: string;
+  actorRole: UserRole;
+  action: string;
+  resourceId?: string;
+  resourceType?: string;
+  status: 'SUCCESS' | 'DENIED' | 'FAILED';
+  details: string;
+  ip?: string;
+}
+
 export interface HealthZone {
   id: string;
   name: string;
@@ -67,6 +98,7 @@ export interface HealthZone {
     lat: number;
     lng: number;
   };
+  version: number;
 }
 
 export interface RuleCheck {
